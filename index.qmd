@@ -1,0 +1,706 @@
+---
+title: "Distribución del Mono maquisapa (Ateles)"
+author: "Andrey Caballero & Mayra Dominguez"
+format: html
+editor: visual
+toc: true
+lang: es
+theme: litera
+---
+
+Distribución del Mono maquisapa (Ateles)
+
+![Imagen local](Maquisapa.jpg) El objetivo del modelamiento Maxent para la especie Ateles (mono maquisapa) es determinar la distribución y el estado de conservación del mono maquisapa al generar una modelación de nicho ecológico que permita realizar una adecuada gestión forestal de su hábitat, considerando las variables climáticas de temperatura y precipitación, y cobertura boscosa.
+
+# Cargas de paquetes para acceder a datos en GBIF
+
+Para dar inicio con la identificación, graficación y modelamiento se realizará la instalación de los paquetes. En este caso las funciones de install.packages () aparecen a manera de comentario para evitar la doble instalación en el caso ya se cuente con ellos. En el caso se necesite realizar la instalación debe retirarse el \# que aparece delante de ellos.
+
+```{r}
+#| label: Carga-paquetes
+#| warning: false
+#| message: false
+
+# Paquete para acceder datos en GBIF
+#install.packages("rgbif")
+
+# Paquete para acceder datos geoespaciales
+#install.packages("geodata")
+
+# Paquete para mapas interactivos
+#install.packages("leaflet")
+
+# Paquete para modelado de distribución de especies
+#install.packages("dismo")
+```
+
+```{r}
+#| label: Carga-librerías
+#| warning: false
+#| message: false
+# Colección de paquetes de Tidyverse
+library(tidyverse)
+
+# Estilos para ggplot2
+library(ggthemes)
+
+# Paletas de colores de RColorBrewer
+library(RColorBrewer)
+
+# Paletas de colores de viridis
+library(viridisLite)
+
+# Gráficos interactivos
+library(plotly)
+
+# Manejo de datos vectoriales
+library(sf)
+
+# Manejo de datos raster
+library(terra)
+
+# Manejo de datos raster
+library(raster)
+
+# Mapas interactivos
+library(leaflet)
+
+# Acceso a datos en GBIF
+library(rgbif)
+
+# Datos geoespaciales
+library(geodata)
+
+# Modelado de distribución de especies
+
+library(dismo)
+
+library(scales)
+
+library(rJava)
+```
+
+# Identificación de la presencia y distribución de la especie Ateles
+
+```{r}
+#| label: Carga-datospresencia
+#| warning: false
+#| message: false
+
+# Nombre de la especie
+especie <- "Ateles"
+```
+
+# Consulta a GBIF
+
+```{r}
+# Consulta a GBIF
+respuesta <- occ_search(
+  scientificName = especie, 
+  hasCoordinate = TRUE,
+  hasGeospatialIssue = FALSE,
+  limit = 20000
+)
+
+# Extraer datos de presencia
+presencia <- respuesta$data
+```
+
+```{r}
+# Guardar los datos de presencia en un archivo CSV
+write_csv(presencia, 'presencia.csv')
+```
+
+```{r}
+#| label: Carga-datospresenciaencsv
+#| warning: false
+#| message: false
+
+
+# Leer los datos de presencia de un archivo CSV
+presencia <- read_csv('presencia.csv')
+
+
+presencia <- st_as_sf(
+  presencia,
+  coords = c("decimalLongitude", "decimalLatitude"),
+  remove = FALSE, # conservar las columnas de las coordenadas
+  crs = 4326
+)
+
+
+```
+
+# Gráfico de barras de la presencia de la especie Ateles por país
+
+```{r}
+# Gráfico ggplot2
+grafico_ggplot2 <-
+  presencia |>
+  st_drop_geometry() |>
+  ggplot(aes(x = fct_infreq(countryCode))) +
+  geom_bar(
+    aes(
+      text = paste0(
+        "Cantidad de registros de presencia: ", after_stat(count)
+      )
+    )    
+  ) +
+  ggtitle("Cantidad de registros de presencia por país") +
+
+  xlab("País") +
+  ylab("Cantidad de registros de presencia") +
+  labs(caption = "Fuente: GBIF") +
+  theme_economist()
+
+# Gráfico plotly
+ggplotly(grafico_ggplot2, tooltip = "text") |> 
+  config(locale = 'es')
+```
+
+# Gráfico de dispersión de la distribución de las observaciones mensuales de la especie Ateles
+
+```{r}
+#| label: Gráfico-dispersión
+#| warning: false
+#| message: false
+
+#Eliminar columnas sin datos
+presencia_clean <- presencia %>%
+  filter(!is.na(month) & month >= 1 & month <= 12)
+
+g <- presencia_clean |>
+  group_by(month) |>
+  summarize(n= n()) |>
+  mutate(month = factor(month, levels = 1:12, labels = month.abb))|>
+  ggplot(aes(x = month, y = n)) +
+  geom_point(aes(
+    text = paste0(
+      "Meses:", month, "\n", 
+      "Número de observaciones: ", n , "\n"
+    )
+  )) +
+  scale_y_continuous(labels = scales::comma) +
+  ggtitle("Números de observaciones por meses de la especie Ateles") +
+  xlab("Meses") +
+  ylab("Observaciones") +
+  labs(caption = "Fuentes: -",
+       color = "Meses") +
+  theme_economist() 
+
+# Gráfico plotly
+ggplotly(g, tooltip = "text") |> 
+  config(locale = 'es') # para mostrar los controles en español
+
+```
+
+# Mapa de nichos ecológicos a partir de datos observados de la especie Ateles
+
+```{r}
+#| label: mapa-nichos
+#| warning: false
+#| message: false
+
+# Mapa
+leaflet() |>
+  addTiles(group = "Mapa general") |>
+  addProviderTiles(
+    providers$Esri.WorldImagery, 
+    group = "Imágenes satelitales"
+  ) |>
+  addProviderTiles(
+    providers$CartoDB.Positron, 
+    group = "Mapa blanco"
+  ) |>  
+  addCircleMarkers(
+    # capa de registros de presencia (puntos)
+    data = presencia,
+    stroke = F,
+    radius = 3,
+    fillColor = 'red',
+    fillOpacity = 1,
+    popup = paste(
+      paste0("<strong>País: </strong>", presencia$country),
+      paste0("<strong>Localidad: </strong>", presencia$locality),
+      paste0("<strong>Fecha: </strong>", presencia$eventDate),
+      paste0("<strong>Fuente: </strong>", presencia$institutionCode),
+      paste0("<a href='", presencia$occurrenceID, "'>Más información</a>"),
+      sep = '<br/>'
+    ),
+    group = "Registros de Ateles"
+  ) |>
+  addLayersControl(
+    baseGroups = c("Mapa general", "Imágenes satelitales", "Mapa blanco"),
+    overlayGroups = c("Registros de Ateles"))
+```
+
+# Consulta y descarga de datos de WorldClim
+
+```{r}
+#| label: Descarga-datosworldclim
+#| warning: false
+#| message: false
+
+# Consulta a WorldClim
+clima <- worldclim_global(var = 'bio', res = 10, path = tempdir())
+
+# Nombres de las variables climáticas
+names(clima)
+```
+
+# Descargar la capa de cobertura vegetal de la base de datos de Geodata
+
+```{r}
+#| label: Mapa-cobertura
+#| warning: false
+#| message: false
+
+
+# Descargar la capa de cobertura de árboles
+trees_30sec <- geodata::landcover(var = 'trees', path = 'data', download = TRUE)
+
+# Visualizar la capa descargada
+plot(trees_30sec)
+```
+
+# Definir la extensión del área de estudio
+
+```{r}
+#| label: Extensión-estudio
+#| warning: false
+#| message: false
+
+# Definir la extensión del área de estudio
+area_estudio <- ext(
+  min(presencia$decimalLongitude) - 5, 
+  max(presencia$decimalLongitude) + 5,
+  min(presencia$decimalLatitude) - 5, 
+  max(presencia$decimalLatitude) + 5
+)
+
+# Recortar las variables bioclimáticas y de cobertura del área de estudio
+clima <- crop(clima, area_estudio)
+cobertura <- crop(trees_30sec, area_estudio)
+
+# Recortar y resamplear 'cobertura' para que tenga la misma extensión y resolución que 'clima'
+cobertura <- cobertura |>
+  crop(ext(clima)) |>
+  resample(clima)
+
+```
+
+# Mapa con capas de clima,cobertura y distribución de la especie Ateles observada
+
+```{r}
+#| label: Mapa-datosobservados
+#| warning: false
+#| message: false
+
+# Paleta de colores de Cobertura
+colores_cobertura <- colorNumeric(
+  palette = "Greens" ,
+  values(cobertura),
+  na.color = "transparent"
+)
+
+# Paleta de colores de temperatura
+colores_temperatura <- colorNumeric(
+  # palette = "inferno",
+  # palette = "magma",
+  palette = rev(brewer.pal(11, "RdYlBu")),
+  values(clima$wc2.1_10m_bio_1),
+  na.color = "transparent"
+)
+
+# Paleta de colores de precipitación
+colores_precipitacion <- colorNumeric(
+  # palette = "viridis",
+  # palette = "YlGnBu",  
+  palette = "Blues",
+  values(clima$wc2.1_10m_bio_12),
+  na.color = "transparent"
+)
+
+# Mapa
+leaflet() |>
+  addTiles(group = "Mapa general") |>
+  addProviderTiles(
+    providers$Esri.WorldImagery, 
+    group = "Imágenes satelitales"
+  ) |>  
+  addProviderTiles(
+    providers$CartoDB.Positron, 
+    group = "Mapa blanco"
+  ) |>
+  addRasterImage( # capa raster de cobertura
+    cobertura,
+    colors = colores_cobertura, # paleta de colores
+    opacity = 0.6,
+    group = "Cobertura",
+  ) |>
+  addRasterImage( # capa raster de temperatura
+    clima$wc2.1_10m_bio_1,
+    colors = colores_temperatura, # paleta de colores
+    opacity = 0.6,
+    group = "Temperatura",
+  ) |>
+  addRasterImage( # capa raster de precipitación
+    clima$wc2.1_10m_bio_12,
+    colors = colores_precipitacion, # paleta de colores
+    opacity = 0.6,
+    group = "Precipitación",
+  ) |>
+  addCircleMarkers(
+    # capa de registros de presencia (puntos)
+    data = presencia,
+    stroke = F,
+    radius = 3,
+    fillColor = 'red',
+    fillOpacity = 1,
+    popup = paste(
+      paste0("<strong>País: </strong>", presencia$country),
+      paste0("<strong>Localidad: </strong>", presencia$locality),
+      paste0("<strong>Fecha: </strong>", presencia$eventDate),
+      paste0("<strong>Fuente: </strong>", presencia$institutionCode),
+      paste0("<a href='", presencia$occurrenceID, "'>Más información</a>"),
+      sep = '<br/>'
+    ),
+    group = "Registros de Ateles"
+  ) |>  
+  addLegend(
+    title = "Cobertura",
+    values = values(cobertura),
+    pal = colores_cobertura,
+    position = "bottomleft",
+    group = "Cobertura"
+  ) |>
+  addLegend(
+    title = "Temperatura",
+    values = values(clima$wc2.1_10m_bio_1),
+    pal = colores_temperatura,
+    position = "bottomleft",
+    group = "Temperatura"
+  ) |>
+  addLegend(
+    title = "Precipitación",
+    values = values(clima$wc2.1_10m_bio_12),
+    pal = colores_precipitacion,
+    position = "bottomleft",
+    group = "Precipitación"
+  ) |>  
+  addLayersControl(
+    # control de capas
+    baseGroups = c("Mapa general", "Imágenes satelitales", "Mapa blanco"),
+    overlayGroups = c("Temperatura", "Precipitación","Cobertura","Registros de Ateles")
+  ) |>
+  hideGroup("Precipitación")
+```
+
+# Modelización de la distribución de especies en Maxent
+
+```{r}
+# Crear dataframe con columnas de longitud y latitud
+coordenadas_presencia <- data.frame(
+  decimalLongitude = presencia$decimalLongitude,
+  decimalLatitude = presencia$decimalLatitude
+)
+
+# Eliminar coordenadas duplicadas
+coordenadas_presencia <- unique(coordenadas_presencia)
+```
+
+```{r}
+# Establecer una "semilla" para garantizar que la selección aleatoria sea reproducible
+set.seed(123)
+
+# Cantidad de registros de presencia (contar y guardar número de filas, numero de observaciones)
+n_presencia <- nrow(coordenadas_presencia)
+
+# Con sample(), se selecciona aleatoriamente una proporción (ej. 0.7) 
+# de los índices de los datos de presencia para el conjunto de entrenamiento
+indices_entrenamiento <- sample(
+  1:n_presencia, 
+  size = round(0.7 * n_presencia)
+)
+
+# Crear el subconjunto de entrenamiento utilizando los índices seleccionados
+entrenamiento <- coordenadas_presencia[indices_entrenamiento, ]
+
+# Crear el subconjunto de evaluación con los datos restantes
+evaluacion <- coordenadas_presencia[-indices_entrenamiento, ]
+```
+
+```{r}
+# Unir las capas de clima y de Cobertura
+variables <- c(clima, cobertura)
+```
+
+```{r}
+#| label: Conversion-raster
+#| warning: false
+#| message: false
+
+# Los datos de clima deben convertirse al formato que usa el paquete raster
+# debido a es este el que acepta el paquete dismo
+variables1 <- raster::stack(variables)
+
+# Ejecutar el modelo
+modelo_maxent <- maxent(x = variables1, p = entrenamiento)
+
+# Aplicar el modelo entrenado a las variables climáticas 
+# para generar un mapa de idoneidad del hábitat
+prediccion <- predict(modelo_maxent, variables)
+
+```
+
+```{r}
+#| label: Evaluacion_modelo1
+#| warning: false
+#| message: false
+
+# terra::extract() extrae los valores del raster de predicción 
+# en las coordenadas de evaluación
+# eval_pres almacena los valores de idoneidad predichos 
+# en los puntos de evaluación de presencia
+
+  eval_pres <- terra::extract(
+  prediccion, 
+  evaluacion[, c('decimalLongitude', 'decimalLatitude')]
+)
+
+# Vector numerico
+  eval_pres <- eval_pres[, 1]  # Seleccionar la columna con los valores
+# Generar puntos aleatorios dentro del área de estudio definida. 
+# Estos puntos se asumen como ausencias de la especie.
+ausencias <- randomPoints(mask = variables1, n = 1000)
+
+# eval_aus almacena los valores de idoneidad predichos
+# en los puntos de ausencia
+eval_aus <- terra::extract(
+  prediccion, 
+  ausencias
+)
+
+# Asegurarse de que eval_aus es un vector numérico
+eval_aus <- eval_aus[, 1]  # Seleccionar la columna con los valores
+
+# Generar estadísticas de evaluación del modelo
+resultado_evaluacion <- evaluate(p = eval_pres, a = eval_aus)
+
+```
+
+## Generación de curva ROC Y AUC
+
+```{r}
+# Datos para graficar la curva ROC
+datos_roc <- data.frame(
+  FPR = resultado_evaluacion@FPR,
+  TPR = resultado_evaluacion@TPR,
+  Umbral = resultado_evaluacion@t
+)
+
+# Valor AUC
+auc <- resultado_evaluacion@auc
+
+# Gráfico ggplot2
+grafico_ggplot2 <-
+  ggplot(
+    datos_roc, 
+    aes(
+      x = FPR, 
+      y = TPR,
+      u = Umbral
+    )
+  ) +
+  geom_line(
+    color = "blue", 
+    size = 1
+  ) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(title = paste("Curva ROC (AUC =", round(auc, 3), ")"),
+       x = "Tasa de falsos positivos (FPR)",
+       y = "Tasa de verdaderos positivos (TPR)") +
+  theme_minimal()
+
+# Gráfico plotly
+ggplotly(grafico_ggplot2) |> 
+  config(locale = 'es')
+
+```
+
+## Mapa interactivo de idoneidad del hábitat con probabilidad de presencia de la especie Ateles
+
+```{r}
+# Paleta de colores del modelo
+colores_modelo <- colorNumeric(
+  palette = c("white", "black"),
+  values(prediccion),
+  na.color = "transparent"
+)
+
+# Mapa
+leaflet() |>
+  addTiles(group = "Mapa general") |>
+  addProviderTiles(
+    providers$Esri.WorldImagery, 
+    group = "Imágenes satelitales"
+  ) |>  
+  addProviderTiles(
+    providers$CartoDB.Positron, 
+    group = "Mapa blanco"
+  ) |>
+  addRasterImage( # capa raster de cobertura
+    cobertura,
+    colors = colores_cobertura, # paleta de colores
+    opacity = 0.6,
+    group = "Cobertura",
+  ) |>
+  addRasterImage( # capa raster de temperatura
+    clima$wc2.1_10m_bio_1,
+    colors = colores_temperatura, # paleta de colores
+    opacity = 0.6,
+    group = "Temperatura",
+  ) |>
+  addRasterImage( # capa raster de precipitación
+    clima$wc2.1_10m_bio_12,
+    colors = colores_precipitacion, # paleta de colores
+    opacity = 0.6,
+    group = "Precipitación",
+  ) |>
+  addRasterImage( # capa raster del modelo de distribución
+    prediccion,
+    colors = colores_modelo,
+    opacity = 0.6,
+    group = "Modelo de distribución",
+  ) |>  
+  addCircleMarkers(
+    # capa de registros de presencia (puntos)
+    data = presencia,
+    stroke = F,
+    radius = 3,
+    fillColor = 'red',
+    fillOpacity = 1,
+    popup = paste(
+      paste0("<strong>País: </strong>", presencia$country),
+      paste0("<strong>Localidad: </strong>", presencia$locality),
+      paste0("<strong>Fecha: </strong>", presencia$eventDate),
+      paste0("<strong>Fuente: </strong>", presencia$institutionCode),
+      paste0("<a href='", presencia$occurrenceID, "'>Más información</a>"),
+      sep = '<br/>'
+    ),
+    group = "Registros de Ateles"
+  ) |> 
+  addLegend(
+    title = "Cobertura",
+    values = values(cobertura),
+    pal = colores_cobertura,
+    position = "bottomleft",
+    group = "Cobertura"
+  ) |>
+  addLegend(
+    title = "Temperatura",
+    values = values(clima$wc2.1_10m_bio_1),
+    pal = colores_temperatura,
+    position = "bottomleft",
+    group = "Temperatura"
+  ) |>
+  addLegend(
+    title = "Precipitación",
+    values = values(clima$wc2.1_10m_bio_12),
+    pal = colores_precipitacion,
+    position = "bottomleft",
+    group = "Precipitación"
+  ) |>
+  addLegend(
+    title = "Modelo de distribución",
+    values = values(prediccion),
+    pal = colores_modelo,
+    position = "bottomright",
+    group = "Modelo de distribución"
+  ) |>  
+  addLayersControl(
+    # control de capas
+    baseGroups = c("Mapa general", "Imágenes satelitales", "Mapa blanco"),
+    overlayGroups = c(
+      "Temperatura",
+      "Precipitación",
+      "Cobertura",
+      "Modelo de distribución",
+      "Registros de Ateles"
+    )
+  ) |>
+  hideGroup("Temperatura") |>
+  hideGroup("Precipitación")|>
+  hideGroup("Cobertura")
+```
+
+# Mapa interactivo binario de distribución de la especie Ateles
+
+```{r}
+#| label: Mapa-binario
+#| warning: false
+#| message: false
+
+# Definir el umbral
+umbral <- 0.5
+
+# Crear el raster binario
+prediccion_binaria <- (prediccion >= umbral) * 1
+
+# Crear la paleta de colores para el raster binario
+colores_prediccion_binaria <- colorFactor(
+  palette = c("transparent", "blue"),  # "transparent" para las áreas no adecuadas
+  domain = c(0, 1),
+  na.color = "transparent"
+)
+
+# Mapa
+leaflet() |>
+  addTiles(group = "Mapa general") |>
+  addProviderTiles(
+    providers$Esri.WorldImagery, 
+    group = "Imágenes satelitales"
+  ) |>
+  addProviderTiles(
+    providers$CartoDB.Positron, 
+    group = "Mapa blanco"
+  ) |>
+  addRasterImage(
+    prediccion_binaria,
+    colors = colores_prediccion_binaria,
+    opacity = 0.6,
+    group = "Modelo de distribución binario",
+  ) |>
+  addCircleMarkers(
+    data = presencia,
+    stroke = FALSE,
+    radius = 3,
+    fillColor = 'red',
+    fillOpacity = 1,
+    popup = paste(
+      paste0("<strong>País: </strong>", presencia$country),
+      paste0("<strong>Localidad: </strong>", presencia$locality),
+      paste0("<strong>Fecha: </strong>", presencia$eventDate),
+      paste0("<strong>Fuente: </strong>", presencia$institutionCode),
+      paste0("<a href='", presencia$occurrenceID, "'>Más información</a>"),
+      sep = '<br/>'
+    ),
+    group = "Registros de Ateles"
+  ) |>
+  addLegend(
+    title = "Modelo de distribución binario",
+    labels = c("Ausencia", "Presencia"),
+    colors = c("transparent", "blue"),
+    position = "bottomright",
+    group = "Modelo de distribución binario"
+  ) |>
+  addLayersControl(
+    baseGroups = c("Mapa general", "Imágenes satelitales", "Mapa blanco"),
+    overlayGroups = c(
+      "Modelo de distribución binario",
+      "Registros de Ateles"
+    )
+  )
+```
+
+El mono araña Geoffroy (Ateles geoffroyi) es una especie altamente dependiente de su entorno, y su bienestar está estrechamente relacionado con factores climáticos, de precipitación y de cobertura boscosa. Aquí hay un análisis de cómo estos factores pueden afectarlo, considerando precipitación debido al aporte del recurso para la maduración de frutos. En época seca, se ven afectados por la falta de precipitación y por ende deben desplazarse. Otro elemento importante, esta especie requiere una cobertura boscosa densa para moverse, alimentarse y escapar de depredadores. La pérdida de bosque reduce su movilidad, aislamiento de poblaciones y acceso a recursos. Además, la deforestación y fragmentación del hábitat los obliga a cruzar áreas abiertas, donde son más vulnerables a depredadores y humanos. También aumenta el riesgo de conflictos con humanos en zonas agrícolas. Lo anterior, produce que la especie se ve en la obligación en desplazarse en la búsqueda de alimentos y espacios seguros.
